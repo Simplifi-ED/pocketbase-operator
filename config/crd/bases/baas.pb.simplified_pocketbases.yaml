@@ -163,9 +163,6 @@ spec:
                   volumeMountPath:
                     description: VolumeMountPath is the path where the volume is mounted.
                     type: string
-                  volumeName:
-                    description: VolumeName is the name of the volume.
-                    type: string
                 type: object
             type: object
           status:

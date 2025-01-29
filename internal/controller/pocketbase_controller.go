@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,7 +50,7 @@ type PocketbaseReconciler struct {
 // Add this to your pocketbase_controller.go
 func labelsForPocketbase(pb *baasv1.Pocketbase) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       pb.Name,
+		"app.kubernetes.io/name":       pb.Spec.Name,
 		"app.kubernetes.io/instance":   "pocketbase",
 		"app.kubernetes.io/component":  "database",
 		"app.kubernetes.io/part-of":    "pocketbase-operator",
@@ -60,6 +62,7 @@ func labelsForPocketbase(pb *baasv1.Pocketbase) map[string]string {
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=persistentvolumes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pocketbases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pocketbases/status,verbs=get;update;patch
@@ -94,8 +97,19 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				logger.Error(err, "Failed to delete resources")
 				return ctrl.Result{}, err
 			}
-			pb.Finalizers = removeString(pb.Finalizers, finalizerName)
-			if err := r.Update(ctx, pb); err != nil {
+
+			// Fetch latest version before updating
+			latest := &baasv1.Pocketbase{}
+			if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+				if errors.IsNotFound(err) {
+					// Resource is already gone
+					return ctrl.Result{}, nil
+				}
+				return ctrl.Result{}, err
+			}
+
+			latest.Finalizers = removeString(latest.Finalizers, finalizerName)
+			if err := r.Update(ctx, latest); err != nil {
 				logger.Error(err, "Failed to update PocketBase after removing finalizer")
 				return ctrl.Result{}, err
 			}
@@ -126,16 +140,16 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.reconcileDeployment(ctx, pb); err != nil {
 		return ctrl.Result{}, err
 	}
-	// if err := r.reconcileIngress(ctx, pb); err != nil {
-	// 	return ctrl.Result{}, err
-	// }
+	if err := r.reconcileIngress(ctx, pb); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
 func (r *PocketbaseReconciler) reconcilePVC(ctx context.Context, pb *baasv1.Pocketbase) error {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pb.Name,
+			Name:      pb.Spec.Name + "-pvc",
 			Namespace: pb.Namespace,
 			Labels:    labelsForPocketbase(pb),
 			OwnerReferences: []metav1.OwnerReference{
@@ -153,7 +167,7 @@ func (r *PocketbaseReconciler) reconcilePVC(ctx context.Context, pb *baasv1.Pock
 		},
 	}
 
-	err := r.Get(ctx, types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace}, pvc)
+	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name + "-pvc", Namespace: pb.Namespace}, pvc)
 	if err != nil && errors.IsNotFound(err) {
 		if err := r.Create(ctx, pvc); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to create PVC")
@@ -183,7 +197,7 @@ func (r *PocketbaseReconciler) reconcilePVC(ctx context.Context, pb *baasv1.Pock
 func (r *PocketbaseReconciler) reconcileConfigMap(ctx context.Context, pb *baasv1.Pocketbase) error {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pb.Name + "-config",
+			Name:      pb.Spec.Name + "-config",
 			Namespace: pb.Namespace,
 			Labels:    labelsForPocketbase(pb),
 			OwnerReferences: []metav1.OwnerReference{
@@ -192,7 +206,7 @@ func (r *PocketbaseReconciler) reconcileConfigMap(ctx context.Context, pb *baasv
 		},
 	}
 
-	err := r.Get(ctx, types.NamespacedName{Name: pb.Name + "-config", Namespace: pb.Namespace}, cm)
+	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name + "-config", Namespace: pb.Namespace}, cm)
 	if err != nil && errors.IsNotFound(err) {
 		cm.Data = map[string]string{} // Add config data here
 		if err := r.Create(ctx, cm); err != nil {
@@ -211,7 +225,7 @@ func (r *PocketbaseReconciler) reconcileConfigMap(ctx context.Context, pb *baasv
 func (r *PocketbaseReconciler) reconcileService(ctx context.Context, pb *baasv1.Pocketbase) error {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pb.Name,
+			Name:      pb.Spec.Name + "-svc",
 			Namespace: pb.Namespace,
 			Labels:    labelsForPocketbase(pb),
 			OwnerReferences: []metav1.OwnerReference{
@@ -230,7 +244,7 @@ func (r *PocketbaseReconciler) reconcileService(ctx context.Context, pb *baasv1.
 		},
 	}
 
-	err := r.Get(ctx, types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace}, svc)
+	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name + "-svc", Namespace: pb.Namespace}, svc)
 	if err != nil && errors.IsNotFound(err) {
 		if err := r.Create(ctx, svc); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to create Service")
@@ -247,7 +261,7 @@ func (r *PocketbaseReconciler) reconcileService(ctx context.Context, pb *baasv1.
 func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baasv1.Pocketbase) error {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pb.Name,
+			Name:      pb.Spec.Name,
 			Namespace: pb.Namespace,
 			Labels:    labelsForPocketbase(pb),
 			OwnerReferences: []metav1.OwnerReference{
@@ -299,20 +313,20 @@ func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baas
 						EnvFrom: []corev1.EnvFromSource{{
 							ConfigMapRef: &corev1.ConfigMapEnvSource{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: pb.Name + "-config",
+									Name: pb.Spec.Name + "-config",
 								},
 							},
 						}},
 						VolumeMounts: []corev1.VolumeMount{{
-							Name:      pb.Spec.Volumes.VolumeName,
+							Name:      pb.Spec.Name + "-pv",
 							MountPath: pb.Spec.Volumes.VolumeMountPath,
 						}},
 					}},
 					Volumes: []corev1.Volume{{
-						Name: pb.Spec.Volumes.VolumeName,
+						Name: pb.Spec.Name + "-pv",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: pb.Name,
+								ClaimName: pb.Spec.Name + "-pvc",
 							},
 						},
 					}},
@@ -321,7 +335,7 @@ func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baas
 		},
 	}
 
-	err := r.Get(ctx, types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace}, deploy)
+	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name, Namespace: pb.Namespace}, deploy)
 	if err != nil && errors.IsNotFound(err) {
 		if err := r.Create(ctx, deploy); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to create Deployment")
@@ -339,6 +353,16 @@ func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baas
 		updateRequired = true
 	}
 
+	if !reflect.DeepEqual(deploy.Spec.Template.Spec.Containers[0].Resources, pb.Spec.Resources) {
+		deploy.Spec.Template.Spec.Containers[0].Resources = pb.Spec.Resources
+		updateRequired = true
+	}
+
+	if deploy.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath != pb.Spec.Volumes.VolumeMountPath {
+		deploy.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = pb.Spec.Volumes.VolumeMountPath
+		updateRequired = true
+	}
+
 	if updateRequired {
 		if err := r.Update(ctx, deploy); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to update Deployment")
@@ -352,83 +376,95 @@ func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baas
 	return nil
 }
 
-// func (r *PocketbaseReconciler) reconcileIngress(ctx context.Context, pb *baasv1.Pocketbase) error {
-// 	// Check if hosts are defined
-// 	if len(pb.Spec.Ingress.Hosts) == 0 {
-// 		return fmt.Errorf("no hosts defined for Ingress %s/%s", pb.Namespace, pb.Name)
-// 	}
+func (r *PocketbaseReconciler) reconcileIngress(ctx context.Context, pb *baasv1.Pocketbase) error {
+	if len(pb.Spec.Ingress.Hosts) == 0 {
+		return nil // Skip ingress creation if no hosts defined
+	}
 
-// 	// Create Ingress resource
-// 	ingress := &networkingv1.Ingress{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      pb.Name,
-// 			Namespace: pb.Namespace,
-// 			Labels:    labelsForPocketbase(pb),
-// 			OwnerReferences: []metav1.OwnerReference{
-// 				*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
-// 			},
-// 		},
-// 		Spec: networkingv1.IngressSpec{
-// 			IngressClassName: &pb.Spec.Ingress.IngressClassName,
-// 			Rules: []networkingv1.IngressRule{
-// 				{
-// 					Host: pb.Spec.Ingress.Hosts[0].Host,
-// 					IngressRuleValue: networkingv1.IngressRuleValue{
-// 						HTTP: &networkingv1.HTTPIngressRuleValue{
-// 							Paths: []networkingv1.HTTPIngressPath{
-// 								{
-// 									Path:     pb.Spec.Ingress.Hosts[0].Paths[0].Path,
-// 									PathType: (*networkingv1.PathType)(&pb.Spec.Ingress.Hosts[0].Paths[0].PathType),
-// 								},
-// 							},
-// 						},
-// 					},
-// 				},
-// 			},
-// 			TLS: []networkingv1.IngressTLS{
-// 				{
-// 					Hosts:      []string{pb.Spec.Ingress.Hosts[0].Host},
-// 					SecretName: pb.Spec.Ingress.TLS[0].SecretName,
-// 				},
-// 			},
-// 		},
-// 	}
+	pathType := networkingv1.PathTypePrefix
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        pb.Spec.Name + "-ingress",
+			Namespace:   pb.Namespace,
+			Labels:      labelsForPocketbase(pb),
+			Annotations: pb.Spec.Ingress.Annotations,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &pb.Spec.Ingress.IngressClassName,
+			Rules:            []networkingv1.IngressRule{},
+			TLS:              []networkingv1.IngressTLS{},
+		},
+	}
 
-// 	// Add annotations if provided
-// 	if pb.Spec.Ingress.Annotations != nil {
-// 		ingress.Annotations = pb.Spec.Ingress.Annotations
-// 	}
+	// Configure rules for each host
+	for _, host := range pb.Spec.Ingress.Hosts {
+		rule := networkingv1.IngressRule{
+			Host: host.Host,
+			IngressRuleValue: networkingv1.IngressRuleValue{
+				HTTP: &networkingv1.HTTPIngressRuleValue{
+					Paths: []networkingv1.HTTPIngressPath{},
+				},
+			},
+		}
 
-// 	// Log ingress details
-// 	log.FromContext(ctx).Info("Creating Ingress", "name", pb.Name, "namespace", pb.Namespace)
+		// Add paths for this host
+		for _, path := range host.Paths {
+			ingressPath := networkingv1.HTTPIngressPath{
+				Path:     path.Path,
+				PathType: &pathType,
+				Backend: networkingv1.IngressBackend{
+					Service: &networkingv1.IngressServiceBackend{
+						Name: pb.Spec.Name,
+						Port: networkingv1.ServiceBackendPort{
+							Number: 8090,
+						},
+					},
+				},
+			}
+			rule.IngressRuleValue.HTTP.Paths = append(rule.IngressRuleValue.HTTP.Paths, ingressPath)
+		}
+		ingress.Spec.Rules = append(ingress.Spec.Rules, rule)
+	}
 
-// 	// Get or create Ingress
-// 	err := r.Get(ctx, types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace}, ingress)
-// 	if err != nil && errors.IsNotFound(err) {
-// 		if err := r.Create(ctx, ingress); err != nil {
-// 			log.FromContext(ctx).Error(err, "Failed to create Ingress")
-// 			return err
-// 		}
-// 		log.FromContext(ctx).Info("Ingress created successfully")
-// 	} else if err != nil {
-// 		log.FromContext(ctx).Error(err, "Failed to get Ingress")
-// 		return err
-// 	}
+	// Configure TLS if specified
+	if len(pb.Spec.Ingress.TLS) > 0 {
+		ingressTLS := make([]networkingv1.IngressTLS, len(pb.Spec.Ingress.TLS))
+		for i, tlsConfig := range pb.Spec.Ingress.TLS {
+			ingressTLS[i] = networkingv1.IngressTLS{
+				Hosts:      tlsConfig.Hosts,
+				SecretName: tlsConfig.SecretName,
+			}
+		}
+		ingress.Spec.TLS = ingressTLS
+	}
 
-// 	// Update status
-// 	pb.Status.Ingress = &baasv1.IngressStatus{
-// 		Host: ingress.Spec.Rules[0].Host,
-// 	}
+	// Create or update ingress
+	existingIngress := &networkingv1.Ingress{}
+	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name + "-ingress", Namespace: pb.Namespace}, existingIngress)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			if err := r.Create(ctx, ingress); err != nil {
+				return fmt.Errorf("failed to create ingress: %w", err)
+			}
+			log.FromContext(ctx).Info("Ingress created successfully")
+			return nil
+		}
+		return fmt.Errorf("failed to get ingress: %w", err)
+	}
 
-// 	// Update the Pocketbase status
-// 	if err := r.Status().Update(ctx, pb); err != nil {
-// 		log.FromContext(ctx).Error(err, "Failed to update Pocketbase status")
-// 		return err
-// 	}
+	// Update existing ingress
+	existingIngress.Spec = ingress.Spec
+	existingIngress.Annotations = ingress.Annotations
+	if err := r.Update(ctx, existingIngress); err != nil {
+		return fmt.Errorf("failed to update ingress: %w", err)
+	}
 
-// 	return nil
-// }
-
+	log.FromContext(ctx).Info("Ingress updated successfully")
+	return nil
+}
 func contains(slice []string, item string) bool {
 	for _, i := range slice {
 		if i == item {
@@ -448,42 +484,40 @@ func removeString(slice []string, s string) []string {
 }
 
 func (r *PocketbaseReconciler) deleteResources(ctx context.Context, pb *baasv1.Pocketbase) error {
-	namespacedName := types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace}
-
-	// Delete Deployment
+	// Delete Deployment (no suffix)
+	deployName := types.NamespacedName{Name: pb.Spec.Name, Namespace: pb.Namespace}
 	deploy := &appsv1.Deployment{}
-	if err := r.Get(ctx, namespacedName, deploy); err == nil {
+	if err := r.Get(ctx, deployName, deploy); err == nil {
 		if err := r.Delete(ctx, deploy); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete Deployment: %w", err)
 		}
-		log.FromContext(ctx).Info("Deployment deleted successfully")
 	}
 
-	// Delete Service
+	// Delete Service (with -svc suffix)
+	svcName := types.NamespacedName{Name: pb.Spec.Name + "-svc", Namespace: pb.Namespace}
 	svc := &corev1.Service{}
-	if err := r.Get(ctx, namespacedName, svc); err == nil {
+	if err := r.Get(ctx, svcName, svc); err == nil {
 		if err := r.Delete(ctx, svc); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete Service: %w", err)
 		}
-		log.FromContext(ctx).Info("Service deleted successfully")
 	}
 
-	// Delete ConfigMap
+	// Delete ConfigMap (with -config suffix)
+	cmName := types.NamespacedName{Name: pb.Spec.Name + "-config", Namespace: pb.Namespace}
 	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Name: pb.Name + "-config", Namespace: pb.Namespace}, cm); err == nil {
+	if err := r.Get(ctx, cmName, cm); err == nil {
 		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete ConfigMap: %w", err)
 		}
-		log.FromContext(ctx).Info("ConfigMap deleted successfully")
 	}
 
-	// Delete PVC
+	// Delete PVC (with -pvc suffix)
+	pvcName := types.NamespacedName{Name: pb.Spec.Name + "-pvc", Namespace: pb.Namespace}
 	pvc := &corev1.PersistentVolumeClaim{}
-	if err := r.Get(ctx, namespacedName, pvc); err == nil {
+	if err := r.Get(ctx, pvcName, pvc); err == nil {
 		if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete PVC: %w", err)
 		}
-		log.FromContext(ctx).Info("PVC deleted successfully")
 	}
 
 	return nil
@@ -495,6 +529,9 @@ func (r *PocketbaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&baasv1.Pocketbase{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&networkingv1.Ingress{}).
 		Complete(r)
 	// Named("pocketbase").
 }

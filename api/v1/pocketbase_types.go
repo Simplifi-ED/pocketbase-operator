@@ -79,9 +79,6 @@ type VolumeConfig struct {
 
 	// VolumeMountPath is the path where the volume is mounted.
 	VolumeMountPath string `json:"volumeMountPath,omitempty"`
-
-	// VolumeName is the name of the volume.
-	VolumeName string `json:"volumeName,omitempty"`
 }
 
 // PocketbaseStatus defines the observed state of Pocketbase.
