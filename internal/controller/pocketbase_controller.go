@@ -83,7 +83,7 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Create PVC
+	// Handle changes in PVC
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pb.Name,
@@ -93,21 +93,40 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
 			},
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			StorageClassName: &pb.Spec.Volumes.StorageClassName,
-			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.PersistentVolumeAccessMode(pb.Spec.Volumes.AccessModes[0])},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(pb.Spec.Volumes.StorageSize),
+	}
+
+	// Check if PVC exists and compare spec
+	if err := r.Get(ctx, client.ObjectKey{Name: pb.Name, Namespace: pb.Namespace}, pvc); err != nil {
+		if errors.IsNotFound(err) {
+			// PVC doesn't exist, create it
+			pvc.Spec = corev1.PersistentVolumeClaimSpec{
+				StorageClassName: &pb.Spec.Volumes.StorageClassName,
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.PersistentVolumeAccessMode(pb.Spec.Volumes.AccessModes[0])},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: resource.MustParse(pb.Spec.Volumes.StorageSize),
+					},
 				},
-			},
-		},
+			}
+			if err := r.Create(ctx, pvc); err != nil {
+				logger.Error(err, "Failed to create PVC")
+				return ctrl.Result{}, err
+			}
+			logger.Info("PVC created successfully")
+		} else {
+			// Handle PVC spec update (if required)
+			if pvc.Spec.StorageClassName != &pb.Spec.Volumes.StorageClassName ||
+				pvc.Spec.Resources.Requests[corev1.ResourceStorage] != resource.MustParse(pb.Spec.Volumes.StorageSize) {
+				pvc.Spec.StorageClassName = &pb.Spec.Volumes.StorageClassName
+				pvc.Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse(pb.Spec.Volumes.StorageSize)
+				if err := r.Update(ctx, pvc); err != nil {
+					logger.Error(err, "Failed to update PVC")
+					return ctrl.Result{}, err
+				}
+				logger.Info("PVC updated successfully")
+			}
+		}
 	}
-	if err := r.Create(ctx, pvc); err != nil && !errors.IsAlreadyExists(err) {
-		logger.Error(err, "Failed to create PVC")
-		return ctrl.Result{}, err
-	}
-	logger.Info("PVC created successfully")
 
 	// Create ConfigMap
 	cm := &corev1.ConfigMap{
@@ -119,13 +138,27 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
 			},
 		},
-		Data: map[string]string{}, // Add your config data here
 	}
-	if err := r.Create(ctx, cm); err != nil && !errors.IsAlreadyExists(err) {
-		logger.Error(err, "Failed to create ConfigMap")
-		return ctrl.Result{}, err
+
+	if err := r.Get(ctx, client.ObjectKey{Name: pb.Name + "-config", Namespace: pb.Namespace}, cm); err != nil {
+		if errors.IsNotFound(err) {
+			// ConfigMap doesn't exist, create it
+			cm.Data = map[string]string{} // Add config data here
+			if err := r.Create(ctx, cm); err != nil {
+				logger.Error(err, "Failed to create ConfigMap")
+				return ctrl.Result{}, err
+			}
+			logger.Info("ConfigMap created successfully")
+		} else {
+			// Handle ConfigMap updates
+			// If there is any change in the config data, update the ConfigMap
+			if err := r.Update(ctx, cm); err != nil {
+				logger.Error(err, "Failed to update ConfigMap")
+				return ctrl.Result{}, err
+			}
+			logger.Info("ConfigMap updated successfully")
+		}
 	}
-	logger.Info("ConfigMap created successfully")
 
 	// Create Service
 	svc := &corev1.Service{
@@ -155,6 +188,86 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	logger.Info("Service created successfully")
 
 	// Create Deployment
+	// deploy := &appsv1.Deployment{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name:      pb.Name,
+	// 		Namespace: pb.Namespace,
+	// 		Labels:    labelsForPocketbase(pb),
+	// 		OwnerReferences: []metav1.OwnerReference{
+	// 			*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
+	// 		},
+	// 	},
+	// 	Spec: appsv1.DeploymentSpec{
+	// 		Replicas: ptr.To[int32](1),
+	// 		Selector: &metav1.LabelSelector{
+	// 			MatchLabels: labelsForPocketbase(pb),
+	// 		},
+	// 		Template: corev1.PodTemplateSpec{
+	// 			ObjectMeta: metav1.ObjectMeta{
+	// 				Labels: labelsForPocketbase(pb),
+	// 			},
+	// 			Spec: corev1.PodSpec{
+	// 				SecurityContext: &corev1.PodSecurityContext{
+	// 					RunAsUser:  ptr.To[int64](0),
+	// 					RunAsGroup: ptr.To[int64](0),
+	// 				},
+	// 				Containers: []corev1.Container{{
+	// 					Name:  "pocketbase",
+	// 					Image: pb.Spec.Image,
+	// 					SecurityContext: &corev1.SecurityContext{
+	// 						Privileged: ptr.To[bool](true),
+	// 					},
+	// 					Ports: []corev1.ContainerPort{{
+	// 						Name:          "http",
+	// 						ContainerPort: 8090,
+	// 						Protocol:      corev1.ProtocolTCP,
+	// 					}},
+	// 					LivenessProbe: &corev1.Probe{
+	// 						ProbeHandler: corev1.ProbeHandler{
+	// 							HTTPGet: &corev1.HTTPGetAction{
+	// 								Path: "/api/health",
+	// 								Port: intstr.FromString("http"),
+	// 							},
+	// 						},
+	// 					},
+	// 					ReadinessProbe: &corev1.Probe{
+	// 						ProbeHandler: corev1.ProbeHandler{
+	// 							HTTPGet: &corev1.HTTPGetAction{
+	// 								Path: "/api/health",
+	// 								Port: intstr.FromString("http"),
+	// 							},
+	// 						},
+	// 					},
+	// 					Resources: pb.Spec.Resources,
+	// 					EnvFrom: []corev1.EnvFromSource{{
+	// 						ConfigMapRef: &corev1.ConfigMapEnvSource{
+	// 							LocalObjectReference: corev1.LocalObjectReference{
+	// 								Name: pb.Name + "-config",
+	// 							},
+	// 						},
+	// 					}},
+	// 					VolumeMounts: []corev1.VolumeMount{{
+	// 						Name:      pb.Spec.Volumes.VolumeName,
+	// 						MountPath: pb.Spec.Volumes.VolumeMountPath,
+	// 					}},
+	// 				}},
+	// 				Volumes: []corev1.Volume{{
+	// 					Name: pb.Spec.Volumes.VolumeName,
+	// 					VolumeSource: corev1.VolumeSource{
+	// 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+	// 							ClaimName: pb.Name,
+	// 						},
+	// 					},
+	// 				}},
+	// 			},
+	// 		},
+	// 	},
+	// }
+	// if err := r.Create(ctx, deploy); err != nil && !errors.IsAlreadyExists(err) {
+	// 	logger.Error(err, "Failed to create Deployment")
+	// 	return ctrl.Result{}, err
+	// }
+	// logger.Info("Deployment created successfully")
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pb.Name,
@@ -164,77 +277,111 @@ func (r *PocketbaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
 			},
 		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To[int32](1),
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labelsForPocketbase(pb),
-			},
-			Template: corev1.PodTemplateSpec{
+	}
+
+	if err := r.Get(ctx, client.ObjectKey{Name: pb.Name, Namespace: pb.Namespace}, deploy); err != nil {
+		if errors.IsNotFound(err) {
+			// Handle Deployment creation
+			deploy := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labelsForPocketbase(pb),
-				},
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:  ptr.To[int64](0),
-						RunAsGroup: ptr.To[int64](0),
+					Name:      pb.Name,
+					Namespace: pb.Namespace,
+					Labels:    labelsForPocketbase(pb),
+					OwnerReferences: []metav1.OwnerReference{
+						*metav1.NewControllerRef(pb, baasv1.GroupVersion.WithKind("Pocketbase")),
 					},
-					Containers: []corev1.Container{{
-						Name:  "pocketbase",
-						Image: pb.Spec.Image,
-						SecurityContext: &corev1.SecurityContext{
-							Privileged: ptr.To[bool](true),
-						},
-						Ports: []corev1.ContainerPort{{
-							Name:          "http",
-							ContainerPort: 8090,
-							Protocol:      corev1.ProtocolTCP,
-						}},
-						LivenessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{
-									Path: "/api/health",
-									Port: intstr.FromString("http"),
-								},
-							},
-						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{
-									Path: "/api/health",
-									Port: intstr.FromString("http"),
-								},
-							},
-						},
-						Resources: pb.Spec.Resources,
-						EnvFrom: []corev1.EnvFromSource{{
-							ConfigMapRef: &corev1.ConfigMapEnvSource{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: pb.Name + "-config",
-								},
-							},
-						}},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      pb.Spec.Volumes.VolumeName,
-							MountPath: pb.Spec.Volumes.VolumeMountPath,
-						}},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: pb.Spec.Volumes.VolumeName,
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: pb.Name,
-							},
-						},
-					}},
 				},
-			},
-		},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr.To[int32](1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: labelsForPocketbase(pb),
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: labelsForPocketbase(pb),
+						},
+						Spec: corev1.PodSpec{
+							SecurityContext: &corev1.PodSecurityContext{
+								RunAsUser:  ptr.To[int64](0),
+								RunAsGroup: ptr.To[int64](0),
+							},
+							Containers: []corev1.Container{{
+								Name:  "pocketbase",
+								Image: pb.Spec.Image,
+								SecurityContext: &corev1.SecurityContext{
+									Privileged: ptr.To[bool](true),
+								},
+								Ports: []corev1.ContainerPort{{
+									Name:          "http",
+									ContainerPort: 8090,
+									Protocol:      corev1.ProtocolTCP,
+								}},
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/api/health",
+											Port: intstr.FromString("http"),
+										},
+									},
+								},
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/api/health",
+											Port: intstr.FromString("http"),
+										},
+									},
+								},
+								Resources: pb.Spec.Resources,
+								EnvFrom: []corev1.EnvFromSource{{
+									ConfigMapRef: &corev1.ConfigMapEnvSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: pb.Name + "-config",
+										},
+									},
+								}},
+								VolumeMounts: []corev1.VolumeMount{{
+									Name:      pb.Spec.Volumes.VolumeName,
+									MountPath: pb.Spec.Volumes.VolumeMountPath,
+								}},
+							}},
+							Volumes: []corev1.Volume{{
+								Name: pb.Spec.Volumes.VolumeName,
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: pb.Name,
+									},
+								},
+							}},
+						},
+					},
+				},
+			}
+			if err := r.Create(ctx, deploy); err != nil {
+				logger.Error(err, "Failed to create Deployment")
+				return ctrl.Result{}, err
+			}
+			logger.Info("Deployment created successfully")
+		} else {
+			// Deployment exists, check if spec has changed
+			updateRequired := false
+			// Check if the image or other specs need to be updated
+			if deploy.Spec.Template.Spec.Containers[0].Image != pb.Spec.Image {
+				deploy.Spec.Template.Spec.Containers[0].Image = pb.Spec.Image
+				updateRequired = true
+			}
+			// If any update is required, perform it
+			if updateRequired {
+				if err := r.Update(ctx, deploy); err != nil {
+					logger.Error(err, "Failed to update Deployment")
+					return ctrl.Result{}, err
+				}
+				logger.Info("Deployment updated successfully")
+			} else {
+				logger.Info("No update required for Deployment")
+			}
+		}
 	}
-	if err := r.Create(ctx, deploy); err != nil && !errors.IsAlreadyExists(err) {
-		logger.Error(err, "Failed to create Deployment")
-		return ctrl.Result{}, err
-	}
-	logger.Info("Deployment created successfully")
 
 	return ctrl.Result{}, nil
 }

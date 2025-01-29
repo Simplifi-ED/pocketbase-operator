@@ -6,7 +6,7 @@ metadata:
     app: "pocketbase"
 spec:
   name: test
-  image: adrianmusante/pocketbase:latest
+  image: adrianmusante/pocketbase:0.24.4
   resources:
     limits:
       cpu: 100m
