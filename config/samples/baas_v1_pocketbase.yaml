@@ -1,0 +1,9 @@
+apiVersion: baas.pb.simplified/v1
+kind: Pocketbase
+metadata:
+  labels:
+    app.kubernetes.io/name: pocketoperated
+    app.kubernetes.io/managed-by: kustomize
+  name: pocketbase-sample
+spec:
+  # TODO(user): Add fields here

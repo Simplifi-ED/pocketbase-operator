@@ -1,0 +1,23 @@
+apiVersion: "baas.pb.simplified/v1"
+kind: "Pocketbase"
+metadata:
+  name: "pocketbase"
+  labels:
+    app: "pocketbase"
+spec:
+  name: test
+  image: adrianmusante/pocketbase:latest
+  resources:
+    limits:
+      cpu: 100m
+      memory: 100Mi
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  volumes:
+    storageClassName: "local-path"
+    accessModes: 
+      - "ReadWriteOnce"
+    storageSize: "1Gi"
+    volumeMountPath: "/data"
+    volumeName: "pocketbase"

@@ -1,0 +1,37 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - baas.pb.simplified
+  resources:
+  - persistentvolumeclaims
+  - persistentvolumes
+  - pocketbases
+  - pods
+  - services
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baas.pb.simplified
+  resources:
+  - pocketbases/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - baas.pb.simplified
+  resources:
+  - pocketbases/status
+  verbs:
+  - get
+  - patch
+  - update
