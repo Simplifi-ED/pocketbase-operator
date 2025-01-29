@@ -2,11 +2,12 @@ apiVersion: "baas.pb.simplified/v1"
 kind: "Pocketbase"
 metadata:
   name: "pocketbase"
+  namespace: mustard
   labels:
     app: "pocketbase"
 spec:
   name: test
-  image: adrianmusante/pocketbase:0.24.4
+  image: adrianmusante/pocketbase:0.24.3
   resources:
     limits:
       cpu: 100m
@@ -21,3 +22,14 @@ spec:
     storageSize: "1Gi"
     volumeMountPath: "/data"
     volumeName: "pocketbase"
+  # ingress:
+  #   ingressClassName: "kong" 
+  #   hosts:
+  #   - host: baas.test.com
+  #     paths:
+  #     - path: "/"
+  #       pathType: "Prefix"
+  #   tls:
+  #   - secretName: "pocketbase-tls"
+  #     hosts:
+  #     - "baas.test.com"

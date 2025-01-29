@@ -42,6 +42,42 @@ spec:
               image:
                 description: Image is the Docker image to use for the PocketBase instance.
                 type: string
+              ingress:
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  hosts:
+                    items:
+                      properties:
+                        host:
+                          type: string
+                        paths:
+                          items:
+                            properties:
+                              path:
+                                type: string
+                              pathType:
+                                type: string
+                            type: object
+                          type: array
+                      type: object
+                    type: array
+                  ingressClassName:
+                    type: string
+                  tls:
+                    items:
+                      properties:
+                        hosts:
+                          items:
+                            type: string
+                          type: array
+                        secretName:
+                          type: string
+                      type: object
+                    type: array
+                type: object
               name:
                 description: Name is the name of the PocketBase instance.
                 type: string
@@ -165,6 +201,18 @@ spec:
                   - type
                   type: object
                 type: array
+              ingress:
+                properties:
+                  host:
+                    type: string
+                  rules:
+                    items:
+                      type: string
+                    type: array
+                required:
+                - host
+                - rules
+                type: object
             type: object
         type: object
     served: true

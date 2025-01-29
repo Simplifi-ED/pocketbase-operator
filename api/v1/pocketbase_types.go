@@ -43,6 +43,28 @@ type PocketbaseSpec struct {
 
 	// Volumes defines the volumes for the PocketBase instance.
 	Volumes VolumeConfig `json:"volumes,omitempty"`
+
+	Ingress IngressConfig `json:"ingress,omitempty"`
+}
+
+type IngressConfig struct {
+	Hosts            []HostsConfig     `json:"hosts,omitempty"`
+	TLS              []TLSConfig       `json:"tls,omitempty"`
+	IngressClassName string            `json:"ingressClassName,omitempty"`
+	Annotations      map[string]string `json:"annotations,omitempty"`
+}
+type TLSConfig struct {
+	SecretName string   `json:"secretName,omitempty"`
+	Hosts      []string `json:"hosts,omitempty"`
+}
+type HostsConfig struct {
+	Host  string `json:"host,omitempty"`
+	Paths []Path `json:"paths,omitempty"`
+}
+
+type Path struct {
+	Path     string `json:"path,omitempty"`
+	PathType string `json:"pathType,omitempty"`
 }
 
 type VolumeConfig struct {
@@ -66,6 +88,12 @@ type VolumeConfig struct {
 type PocketbaseStatus struct {
 	// Conditions is a list of the current conditions of the PocketBase.
 	Conditions []PocketbaseCondition `json:"conditions,omitempty"`
+	Ingress    *IngressStatus        `json:"ingress,omitempty"`
+}
+
+type IngressStatus struct {
+	Host  string   `json:"host"`
+	Rules []string `json:"rules"`
 }
 
 // PocketbaseCondition is a condition of the PocketBase.
