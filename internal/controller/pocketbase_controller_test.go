@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,55 +31,99 @@ import (
 	baasv1 "pb.simplified/controller/api/v1"
 )
 
+const (
+	timeout  = time.Second * 10
+	interval = time.Millisecond * 250
+)
+
 var _ = Describe("Pocketbase Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
-
 		ctx := context.Background()
-
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
-		pocketbase := &baasv1.Pocketbase{}
+
+		var pocketbase *baasv1.Pocketbase
+		var reconciler *PocketbaseReconciler
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind Pocketbase")
-			err := k8sClient.Get(ctx, typeNamespacedName, pocketbase)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &baasv1.Pocketbase{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
+			pocketbase = &baasv1.Pocketbase{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: baasv1.PocketbaseSpec{
+					Name:  resourceName,
+					Image: "pocketbase/pocketbase:latest",
+					Volumes: baasv1.VolumeConfig{
+						StorageClassName: "standard",
+						StorageSize:      "1Gi",
+						AccessModes:      []string{"ReadWriteOnce"},
+						VolumeMountPath:  "/pb_data",
 					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				},
 			}
-		})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &baasv1.Pocketbase{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance Pocketbase")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &PocketbaseReconciler{
+			reconciler = &PocketbaseReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			Expect(k8sClient.Create(ctx, pocketbase)).To(Succeed())
+
+			// Wait for initial reconciliation
+			Eventually(func() error {
+				return k8sClient.Get(ctx, typeNamespacedName, pocketbase)
+			}, timeout, interval).Should(Succeed())
+		})
+
+		AfterEach(func() {
+			Expect(k8sClient.Delete(ctx, pocketbase)).To(Succeed())
+
+			// Verify resource is actually deleted
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, &baasv1.Pocketbase{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should successfully reconcile the resource", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			// Verify finalizer is added
+			var pb baasv1.Pocketbase
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &pb)).To(Succeed())
+			Expect(pb.Finalizers).To(ContainElement(finalizerName))
+		})
+
+		It("should handle deletion correctly", func() {
+			// First ensure resource exists with finalizer
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Trigger deletion
+			Expect(k8sClient.Delete(ctx, pocketbase)).To(Succeed())
+
+			// Verify deletion handling
+			Eventually(func() error {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				return err
+			}, timeout, interval).Should(Not(HaveOccurred()))
+
+			// Verify resource is gone
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, &baasv1.Pocketbase{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 })
