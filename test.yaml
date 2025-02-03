@@ -22,9 +22,9 @@ spec:
     storageSize: "1Gi"
     volumeMountPath: "/data"
   ingress:
-    ingressClassName: "kong" 
+    ingressClassName: "traefik" 
     hosts:
-    - host: baas.test.com
+    - host: baas.simplified.com
       paths:
       - path: "/"
         pathType: "Prefix"
