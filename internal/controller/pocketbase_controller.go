@@ -58,7 +58,6 @@ func labelsForPocketbase(pb *baasv1.Pocketbase) map[string]string {
 	}
 }
 
-// +kubebuilder:rbac:groups=baas.pb.simplified,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=persistentvolumes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=services,verbs=get;list;watch;create;update;patch;delete
