@@ -12,7 +12,6 @@ rules:
   - pocketbases
   - pods
   - services
-  - statefulsets
   verbs:
   - create
   - delete
@@ -39,6 +38,7 @@ rules:
   - networking.k8s.io
   resources:
   - ingresses
+  - jobs
   verbs:
   - create
   - delete

@@ -141,6 +141,20 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              secretRef:
+                description: Secret Ref is the name of the secret to use for the PocketBase
+                  instance.
+                properties:
+                  name:
+                    description: name is unique within a namespace to reference a
+                      secret resource.
+                    type: string
+                  namespace:
+                    description: namespace defines the space within which the secret
+                      name must be unique.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               serviceAccountName:
                 description: ServiceAccountName is the name of the service account
                   to use for the PocketBase instance.

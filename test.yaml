@@ -1,3 +1,14 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pocketbase-secret
+  namespace: mustard
+  labels:
+    app: "pocketbase"
+stringData:
+  PB_SUPERUSER_EMAIL: <email>
+  PB_SUPERUSER_PASSWORD: <password>
+---
 apiVersion: "baas.pb.simplified/v1"
 kind: "Pocketbase"
 metadata:
@@ -7,7 +18,7 @@ metadata:
     app: "pocketbase"
 spec:
   name: test
-  image: adrianmusante/pocketbase:0.24.4
+  image: simplifiedreg.azurecr.io/simplifactu/pocketbase:0.1.0-2025020514
   resources:
     limits:
       cpu: 100m
@@ -15,6 +26,8 @@ spec:
     requests:
       cpu: 100m
       memory: 100Mi
+  secretRef:
+    name: "pocketbase-secret"
   volumes:
     storageClassName: "local-path"
     accessModes: 

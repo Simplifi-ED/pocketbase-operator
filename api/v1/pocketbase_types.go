@@ -35,6 +35,8 @@ type PocketbaseSpec struct {
 	// Image is the Docker image to use for the PocketBase instance.
 	Image string `json:"image,omitempty"`
 
+	// Secret Ref is the name of the secret to use for the PocketBase instance.
+	SecretRef corev1.SecretReference `json:"secretRef,omitempty"`
 	// // Resources defines the resource requirements for the PocketBase instance.
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
@@ -53,6 +55,7 @@ type IngressConfig struct {
 	IngressClassName string            `json:"ingressClassName,omitempty"`
 	Annotations      map[string]string `json:"annotations,omitempty"`
 }
+
 type TLSConfig struct {
 	SecretName string   `json:"secretName,omitempty"`
 	Hosts      []string `json:"hosts,omitempty"`

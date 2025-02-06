@@ -62,6 +62,7 @@ func labelsForPocketbase(pb *baasv1.Pocketbase) map[string]string {
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pocketbases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baas.pb.simplified,resources=pocketbases/status,verbs=get;update;patch
@@ -332,6 +333,17 @@ func (r *PocketbaseReconciler) reconcileDeployment(ctx context.Context, pb *baas
 				},
 			},
 		},
+	}
+
+	if pb.Spec.SecretRef.Name != "" {
+		secretEnvFrom := corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: pb.Spec.SecretRef.Name,
+				},
+			},
+		}
+		deploy.Spec.Template.Spec.Containers[0].EnvFrom = append(deploy.Spec.Template.Spec.Containers[0].EnvFrom, secretEnvFrom)
 	}
 
 	err := r.Get(ctx, types.NamespacedName{Name: pb.Spec.Name, Namespace: pb.Namespace}, deploy)
