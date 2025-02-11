@@ -2,6 +2,12 @@
 FROM docker.io/golang:1.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+LABEL org.opencontainers.image.source="https://github.com/Simplifi-ED/pocketbase-operator" \
+    org.opencontainers.image.title="Pocketbase Operator" \
+    org.opencontainers.image.description="PocketBase Kubernetes operator" \
+    org.opencontainers.image.authors="zine@simplified.fr" \
+    org.opencontainers.image.vendor="simplifi-ed" \
+    org.opencontainers.image.licenses=Apache-2.0
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
