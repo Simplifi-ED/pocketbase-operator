@@ -5,6 +5,8 @@
 domain: pb.simplified
 layout:
 - go.kubebuilder.io/v4
+plugins:
+  helm.kubebuilder.io/v1-alpha: {}
 projectName: pocketoperated
 repo: pb.simplified/controller
 resources:
